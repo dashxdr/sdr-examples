@@ -40,9 +40,10 @@
 
 #include "rtl-sdr.h"
 
-#define DEFAULT_SAMPLE_RATE   500000
+//#define DEFAULT_SAMPLE_RATE   2560000 //500000
+#define DEFAULT_SAMPLE_RATE   1000000
 #define DEFAULT_DEVICE_INDEX  0
-#define BUFFER_SIZE           (1024*2)
+#define BUFFER_SIZE           (1024*2*2)
 #define FFT_SIZE              (BUFFER_SIZE/2)
 #define DEFAULT_FREQ          97700000
 
@@ -90,7 +91,7 @@ void receive(get_samples_f get_samples , int buffer_size) {
     /* Compute amplitudes in the time domain
        from phase difference between succesive samples */
     for (int i = 0; i < buffer_size; i+=2) {
-      sample = (buffer[i] - 127) + (buffer[i+1] - 127) * I;
+      sample = (((int)buffer[i]) - 127) + (((int)buffer[i+1]) - 127) * I;
       product = sample * conj(prev_sample);
       fft_in[i/2] = atan2(cimag(product), creal(product));
       prev_sample = sample;
@@ -98,7 +99,7 @@ void receive(get_samples_f get_samples , int buffer_size) {
     
     fftw_execute(plan_filter_in);
     filter_mid2[0] = 0;
-    int cutoff = (fft_size)/14;
+    int cutoff = (fft_size)/28;
     for (int i = 1; i < cutoff;i++) {
       filter_mid2[i] = filter_mid[i];
       filter_mid2[fft_size-i] = conj(filter_mid2[i]);
@@ -111,10 +112,14 @@ void receive(get_samples_f get_samples , int buffer_size) {
     fftw_execute(plan_filter_out);
     
     int b = 0;
-    for (int i = 0; i < fft_size; i+=5) {
+static int remainder = 0;
+	int step = 23;
+int i;
+    for (i = remainder; i < fft_size; i+=step) {
       output_buffer[b++] = (short)(creal(fft_out[i]) * 10000.0 / (double)fft_size );
     }
-    
+remainder = i-fft_size;
+
     fwrite(output_buffer, sizeof(int16_t), b, stdout);
   }
 }
@@ -203,7 +208,6 @@ void main(int argc, char **argv) {
     
     // Flush the buffer
     rtlsdr_reset_buffer(device);
-    
     receive(get_samples_rtl_sdr, buffer_size);
   }
 }

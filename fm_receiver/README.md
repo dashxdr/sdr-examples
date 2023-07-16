@@ -45,3 +45,13 @@ Included data
 -------------
 
 The data folder includes short rtl_sdr I/Q capture files of some local radio stations. You can use the '-r' flag to listen to them.
+
+Output Format
+-------------
+The output file is raw mono 16 bit signed samples in your machine's native endian format. For a little-endian
+system this sox command will convert the file foo.raw to foo.wav
+sox -r 44100 -e signed -b 16 -c 1 -L foo.raw foo.wav
+
+Sample Rate
+-----------
+Newer versions of the rtl-sdr can't go down to the 500 khz sample rate.
