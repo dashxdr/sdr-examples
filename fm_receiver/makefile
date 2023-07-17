@@ -5,6 +5,6 @@ all: fm_receiver
 fm_receiver:
 
 test: fm_receiver
-	./fm_receiver -f 91500000 > foo.raw
+	./fm_receiver -s 5 -f 91500000 > foo.raw
 	sox -r 44100 -e signed -b 16 -c 1 -L foo.raw foo.wav
 	mplayer foo.wav

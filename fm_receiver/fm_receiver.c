@@ -46,7 +46,6 @@
 #define BUFFER_SIZE            (2048*2)
 #define FFT_SIZE               (BUFFER_SIZE/2)
 #define DEFAULT_FREQ           97700000
-#define CAPTURE_COUNT          (64*24)
 
 FILE *record_file = NULL;
 rtlsdr_dev_t *device;
@@ -70,7 +69,7 @@ int get_samples_rtl_sdr(uint8_t *buffer, int buffer_len) {
 }
 
 
-void receive(get_samples_f get_samples , int buffer_size, int capture_count, int sample_rate) {
+void receive(get_samples_f get_samples , int buffer_size, int seconds, int sample_rate) {
 	uint8_t buffer[BUFFER_SIZE];
 	int len;
 	double complex sample;
@@ -93,6 +92,9 @@ void receive(get_samples_f get_samples , int buffer_size, int capture_count, int
 	
 static float min=999999;
 static float max=-999999;
+	int output_sample_rate = 44100;
+	int capture_count = seconds * output_sample_rate;
+
 	while(get_samples(buffer, buffer_size) == 1) {
 		/* Compute amplitudes in the time domain
 			from phase difference between succesive samples */
@@ -129,7 +131,7 @@ static int div = 0;
 			if(f<min) min=f;
 			sum+=f;
 			++oc;
-			div += 44100;
+			div += output_sample_rate;
 			if(div<sample_rate) continue;
 			div-=sample_rate;
 			int v = sum/oc*fix;
@@ -142,7 +144,7 @@ static int div = 0;
 		outCount += b;
 
 		fwrite(output_buffer, sizeof(int16_t), b, stdout);
-		if(capture_count && ++cc>=capture_count) break;
+		if(capture_count && outCount>=capture_count) break;
 	}
 	fprintf(stderr, "inCount=%d, outCount=%d, overflowCount=%d\n", inCount, outCount, overflowCount);
 	fprintf(stderr, "min=%f, max=%f\n", min, max);
@@ -155,6 +157,7 @@ Valid options:\n\
 	-r <file>         Use recorded data from <file> instead of an rtl-sdr device\n\
 	-f <frequency>	   Frequency to tune to, in Hz (default: %.2f MHz)\n\
 	-d <device_index> Rtl-sdr device index (default: 0)\n\
+	-s <seconds>      Limit recording to seconds (default: unlimited)\n\
 	-h                Show this\n",
 	DEFAULT_FREQ/1000000.0);
 }
@@ -169,10 +172,11 @@ void main(int argc, char **argv) {
 	uint32_t sample_rate = DEFAULT_SAMPLE_RATE;
 	int buffer_size = BUFFER_SIZE;
 	uint32_t freq = DEFAULT_FREQ; 
+	int seconds = 0;
 
 	/* Parse command line arguments */
 	errno = 0;
-	while ((opt = getopt(argc, argv, "f:d:r:h")) != -1) {
+	while ((opt = getopt(argc, argv, "f:d:r:s:h")) != -1) {
 		switch (opt) {
 			case 'r':
 				record_file = fopen(optarg, "r");
@@ -196,6 +200,9 @@ void main(int argc, char **argv) {
 					print_usage();
 					exit(EXIT_FAILURE);
 				}
+				break;
+			case 's':
+				seconds = strtol(optarg, &end_ptr, 10);
 				break;
 			case 'h':
 				print_usage();
@@ -236,6 +243,6 @@ void main(int argc, char **argv) {
 		
 		// Flush the buffer
 		rtlsdr_reset_buffer(device);
-		receive(get_samples_rtl_sdr, buffer_size, CAPTURE_COUNT, sample_rate);
+		receive(get_samples_rtl_sdr, buffer_size, seconds, sample_rate);
 	}
 }
