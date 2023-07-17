@@ -43,9 +43,10 @@
 //#define DEFAULT_SAMPLE_RATE   2560000 //500000
 #define DEFAULT_SAMPLE_RATE   1000000
 #define DEFAULT_DEVICE_INDEX  0
-#define BUFFER_SIZE           (1024*2*2)
+#define BUFFER_SIZE           (2048*2)
 #define FFT_SIZE              (BUFFER_SIZE/2)
 #define DEFAULT_FREQ          97700000
+#define CAPTURE_COUNT         (64*24)
 
 FILE *record_file = NULL;
 rtlsdr_dev_t *device;
@@ -69,7 +70,7 @@ int get_samples_rtl_sdr(uint8_t *buffer, int buffer_len) {
 }
 
 
-void receive(get_samples_f get_samples , int buffer_size) {
+void receive(get_samples_f get_samples , int buffer_size, int capture_count, int sample_rate) {
   uint8_t buffer[BUFFER_SIZE];
   int len;
   double complex sample;
@@ -80,13 +81,18 @@ void receive(get_samples_f get_samples , int buffer_size) {
   int16_t output_buffer[fft_size];
   double fft_in[fft_size];
   double fft_out[fft_size];
-  
+  int cc=0;
+  int inCount = 0;
+  int outCount = 0;
+  int overflowCount = 0;
   fftw_complex *filter_mid = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * (fft_size));
   fftw_plan plan_filter_in = fftw_plan_dft_r2c_1d(fft_size, fft_in, filter_mid, FFTW_ESTIMATE);
   
   fftw_complex *filter_mid2 = (fftw_complex *) fftw_malloc(sizeof(fftw_complex) * (fft_size));
   fftw_plan plan_filter_out = fftw_plan_dft_c2r_1d(fft_size, filter_mid2, fft_out, FFTW_ESTIMATE);
   
+static float min=999999;
+static float max=-999999;
   while(get_samples(buffer, buffer_size) == 1) {
     /* Compute amplitudes in the time domain
        from phase difference between succesive samples */
@@ -95,11 +101,12 @@ void receive(get_samples_f get_samples , int buffer_size) {
       product = sample * conj(prev_sample);
       fft_in[i/2] = atan2(cimag(product), creal(product));
       prev_sample = sample;
+	++inCount;
     }
     
     fftw_execute(plan_filter_in);
     filter_mid2[0] = 0;
-    int cutoff = (fft_size)/28;
+    int cutoff = 20000*fft_size/sample_rate;//(fft_size)/28;
     for (int i = 1; i < cutoff;i++) {
       filter_mid2[i] = filter_mid[i];
       filter_mid2[fft_size-i] = conj(filter_mid2[i]);
@@ -112,16 +119,33 @@ void receive(get_samples_f get_samples , int buffer_size) {
     fftw_execute(plan_filter_out);
     
     int b = 0;
-static int remainder = 0;
-	int step = 23;
-int i;
-    for (i = remainder; i < fft_size; i+=step) {
-      output_buffer[b++] = (short)(creal(fft_out[i]) * 10000.0 / (double)fft_size );
+static float sum=0.;
+static int oc=0;
+static int div = 0;
+	float fix = 10000.0/fft_size;
+    for (int i = 0; i < fft_size; i++) {
+float f = fft_out[i];
+if(f>max) max=f;
+if(f<min) min=f;
+	sum+=f;
+	++oc;
+	div += 44100;
+	if(div<sample_rate) continue;
+	div-=sample_rate;
+	int v = sum/oc*fix;
+	oc=0.;
+	sum=0.;
+	if(v>32767) {v=32767;++overflowCount;}
+	if(v<-32768) {v=-32768;++overflowCount;}
+      output_buffer[b++] = v;
     }
-remainder = i-fft_size;
+	outCount += b;
 
     fwrite(output_buffer, sizeof(int16_t), b, stdout);
+	if(capture_count && ++cc>=capture_count) break;
   }
+fprintf(stderr, "inCount=%d, outCount=%d, overflowCount=%d\n", inCount, outCount, overflowCount);
+fprintf(stderr, "min=%f, max=%f\n", min, max);
 }
 
 void print_usage() {
@@ -183,7 +207,7 @@ void main(int argc, char **argv) {
   }
 
   if (record_file != NULL) {
-    receive(get_samples_file, buffer_size);
+    receive(get_samples_file, buffer_size, 0, sample_rate);
   } else {
     /* Open device and set it up */
     if (rtlsdr_get_device_count() - 1 < device_index) {
@@ -193,21 +217,25 @@ void main(int argc, char **argv) {
     }
     
     if (rtlsdr_open(&device, device_index) != 0) {
-      fprintf(stderr, "Error opening device %d: %s", strerror(errno));
+      fprintf(stderr, "Error opening device %d: %s", device_index, strerror(errno));
       print_usage();
       exit(EXIT_FAILURE);
     }
-
+int gains[1024];
+int count = rtlsdr_get_tuner_gains(device, gains);
+fprintf(stderr, "rtlsdr_get_tuner_gains returned %d\n", count);
+//int i;for(i=0;i<count;++i) fprintf(stderr, "%2d: %d\n", i, gains[i]);
     // Tuner (ie. E4K/R820T/etc) auto gain
-    rtlsdr_set_tuner_gain_mode(device, 0);
+    rtlsdr_set_tuner_gain_mode(device, 0); // 0 = auto, 1 = manual
+//	rtlsdr_set_tuner_gain(device, gains[count>>1]);
     // RTL2832 auto gain off
-    rtlsdr_set_agc_mode(device, 0);
+    rtlsdr_set_agc_mode(device, 0+1);
     rtlsdr_set_sample_rate(device, sample_rate);
     rtlsdr_set_center_freq(device, freq);
     fprintf(stderr, "Frequency set to %d\n", rtlsdr_get_center_freq(device));
     
     // Flush the buffer
     rtlsdr_reset_buffer(device);
-    receive(get_samples_rtl_sdr, buffer_size);
+    receive(get_samples_rtl_sdr, buffer_size, CAPTURE_COUNT, sample_rate);
   }
 }

@@ -6,6 +6,5 @@ fm_receiver:
 
 test: fm_receiver
 	./fm_receiver -f 91500000 > foo.raw
-play:
 	sox -r 44100 -e signed -b 16 -c 1 -L foo.raw foo.wav
 	mplayer foo.wav
